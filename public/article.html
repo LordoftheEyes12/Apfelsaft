@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Apfelsaft — Article</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="container">
+    <a href="/" class="back">← Back</a>
+  </header>
+
+  <main class="container">
+    <article id="article" class="card"></article>
+  </main>
+
+  <script>
+    function getId() {
+      const parts = location.pathname.split("/");
+      return parts[parts.length - 1];
+    }
+    async function load() {
+      const id = getId();
+      const res = await fetch(`/api/articles/${id}`);
+      const data = await res.json();
+      const el = document.getElementById("article");
+      if (data.error) { el.innerHTML = `<p>${data.error}</p>`; return; }
+      el.innerHTML = `
+        <h1>${data.headline}</h1>
+        <div class="meta">${data.createdAt ? new Date(data.createdAt).toLocaleString() : ""}</div>
+        <p>${(data.content || "").replace(/\n/g, "<br/>")}</p>
+      `;
+      document.title = `Apfelsaft — ${data.headline}`;
+    }
+    load();
+  </script>
+</body>
+</html>

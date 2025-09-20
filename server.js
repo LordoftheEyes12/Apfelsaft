@@ -1,155 +1,90 @@
-const fs = require('fs');
-const path = require('path');
-const express = require('express');
-const morgan = require('morgan');
-const helmet = require('helmet');
-const compression = require('compression');
-const { randomUUID } = require('crypto');
-const slugify = require('slugify');
-const dayjs = require('dayjs');
+// server.js — no EJS, static frontend + JSON API
+const path = require("path");
+const fs = require("fs");
+const express = require("express");
 
 const app = express();
-
-// --- Config ---
 const PORT = process.env.PORT || 3000;
-const DATA_DIR = path.join(__dirname, 'data');
-const DATA_FILE = path.join(DATA_DIR, 'articles.json');
 
-// In-memory storage for serverless environments
-let articlesCache = null;
+// Parse JSON for inbound POSTs (if you push data in)
+app.use(express.json());
 
-// --- Helpers: load/save ---
-function loadArticles() {
-  // If we have cached articles, return them
-  if (articlesCache !== null) {
-    return articlesCache;
-  }
-  
-  // Try to load from file system (for local development)
+// Static assets
+const PUBLIC_DIR = path.join(__dirname, "public");
+app.use(express.static(PUBLIC_DIR));
+
+// Simple data store (file-based for demo)
+const DATA_FILE = path.join(__dirname, "data", "articles.json");
+
+// Ensure data file exists
+function readArticles() {
   try {
-    if (fs.existsSync(DATA_FILE)) {
-      const raw = fs.readFileSync(DATA_FILE, 'utf8');
-      articlesCache = JSON.parse(raw);
-      return articlesCache;
-    }
+    const raw = fs.readFileSync(DATA_FILE, "utf8");
+    return JSON.parse(raw);
   } catch (e) {
-    console.log('Could not read from file system, using in-memory storage:', e.message);
-  }
-  
-  // Initialize empty array if no file exists or file system is read-only
-  articlesCache = [];
-  return articlesCache;
-}
-
-function saveArticles(articles) {
-  // Always update the in-memory cache
-  articlesCache = articles;
-  
-  // Try to save to file system (for local development)
-  try {
-    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR);
-    fs.writeFileSync(DATA_FILE, JSON.stringify(articles, null, 2));
-  } catch (e) {
-    console.log('Could not write to file system (using in-memory storage):', e.message);
-    // This is expected in serverless environments - continue with in-memory storage
+    return { articles: [] };
   }
 }
+function writeArticles(db) {
+  fs.mkdirSync(path.dirname(DATA_FILE), { recursive: true });
+  fs.writeFileSync(DATA_FILE, JSON.stringify(db, null, 2), "utf8");
+}
 
-// --- Express setup ---
-app.set('view engine', 'ejs');
-app.set('views', path.join(__dirname, 'views'));
-
-app.use(helmet());
-app.use(compression());
-app.use(morgan('dev'));
-app.use(express.json({ limit: '1mb' }));
-app.use(express.urlencoded({ extended: false }));
-app.use('/public', express.static(path.join(__dirname, 'public')));
-
-// --- Homepage: list of articles ---
-app.get('/', (req, res) => {
-  const articles = loadArticles().sort((a, b) => b.createdAt - a.createdAt);
-  res.render('index', { articles, dayjs });
-});
-
-// --- Article detail page ---
-app.get('/article/:slug', (req, res, next) => {
-  const { slug } = req.params;
-  const articles = loadArticles();
-  const article = articles.find(a => a.slug === slug);
-  if (!article) return next(); // 404
-  res.render('article', { article, dayjs });
-});
-
-// --- Simple about subpage ---
-app.get('/about', (req, res) => {
-  res.render('about');
-});
-
-// --- API: create article (no auth, headline + content only) ---
-/**
- * POST /api/articles
- * Body (JSON): { headline: string, content: string }
- * Returns: { id, slug, url }
- */
-app.post('/api/articles', (req, res) => {
-  const { headline, content } = req.body || {};
-
-  if (!headline || !content || typeof headline !== 'string' || typeof content !== 'string') {
-    return res.status(400).json({
-      error: "Invalid payload. Expected JSON with 'headline' (string) and 'content' (string)."
-    });
-  }
-
-  const id = randomUUID();
-  const slugBase = slugify(headline, { lower: true, strict: true });
-  const slug = `${slugBase}-${id.slice(0, 8)}`;
-  const createdAt = Date.now();
-
-  const newArticle = {
-    id,
-    slug,
-    headline: headline.trim(),
-    content: content.trim(),
-    createdAt
-  };
-
-  const articles = loadArticles();
-  articles.push(newArticle);
-  saveArticles(articles);
-
-  return res.status(201).json({ id, slug, url: `/article/${slug}` });
-});
-
-// --- API: list articles (optional) ---
-app.get('/api/articles', (req, res) => {
-  const articles = loadArticles()
-    .sort((a, b) => b.createdAt - a.createdAt)
-    .map(a => ({
-      id: a.id,
-      slug: a.slug,
-      headline: a.headline,
-      createdAt: a.createdAt,
-      url: `/article/${a.slug}`
-    }));
+// ---------- API ----------
+app.get("/api/articles", (req, res) => {
+  const { articles } = readArticles();
   res.json({ articles });
 });
 
-// --- 404 & error handlers ---
-app.use((req, res) => {
-  res.status(404).render('404');
+app.get("/api/articles/:id", (req, res) => {
+  const { id } = req.params;
+  const { articles } = readArticles();
+  const item = articles.find(a => String(a.id ?? a.index ?? a._id) === String(id));
+  if (!item) return res.status(404).json({ error: "Not found" });
+  res.json(item);
 });
 
-app.use((err, req, res, next) => {
-  console.error(err);
-  if (req.path.startsWith('/api/')) {
-    res.status(500).json({ error: 'Internal Server Error' });
-  } else {
-    res.status(500).render('500');
-  }
+// Accept new/updated articles via POST (optional)
+app.post("/api/articles", (req, res) => {
+  const payload = req.body;
+  if (!payload) return res.status(400).json({ error: "Missing body" });
+
+  const db = readArticles();
+  const nextId = (() => {
+    const ids = db.articles.map(a => Number(a.id ?? a.index ?? 0)).filter(n => !Number.isNaN(n));
+    return (Math.max(0, ...ids) + 1);
+  })();
+
+  // Accept a single article or an array
+  const toInsert = Array.isArray(payload) ? payload : [payload];
+  const normalized = toInsert.map((a, i) => ({
+    id: a.id ?? a.index ?? (nextId + i),
+    headline: a.headline ?? a.title ?? "Untitled",
+    content: a.content ?? "",
+    createdAt: a.createdAt ?? new Date().toISOString()
+  }));
+
+  db.articles.unshift(...normalized);
+  writeArticles(db);
+
+  res.status(201).json({ inserted: normalized.length, items: normalized });
+});
+
+// ---------- Frontend routes (serve static files) ----------
+app.get("/", (_req, res) => {
+  res.sendFile(path.join(PUBLIC_DIR, "index.html"));
+});
+
+app.get("/article/:id", (_req, res) => {
+  res.sendFile(path.join(PUBLIC_DIR, "article.html"));
+});
+
+// 404 for anything else not handled above
+app.use((req, res) => {
+  if (req.path.startsWith("/api/")) return res.status(404).json({ error: "Not found" });
+  res.status(404).sendFile(path.join(PUBLIC_DIR, "404.html"));
 });
 
 app.listen(PORT, () => {
-  console.log(`News site running on http://localhost:${PORT}`);
-  console.log('POST articles to /api/articles (no auth).');
+  console.log(`Server running on http://localhost:${PORT}`);
 });

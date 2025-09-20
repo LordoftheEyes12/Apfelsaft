@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Apfelsaft — News</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="container">
+    <h1>Apfelsaft</h1>
+    <p class="muted">Simple demo without EJS</p>
+  </header>
+
+  <main class="container" id="list"></main>
+
+  <script>
+    async function load() {
+      const res = await fetch("/api/articles");
+      const data = await res.json();
+      const list = document.getElementById("list");
+      if (!data.articles?.length) {
+        list.innerHTML = `<p class="muted">No articles yet.</p>`;
+        return;
+      }
+      list.innerHTML = data.articles.map(a => `
+        <article class="card">
+          <h2><a href="/article/${a.id}">${a.headline}</a></h2>
+          <p>${(a.content || "").slice(0, 200)}${(a.content||"").length>200?"…":""}</p>
+          <div class="meta">${a.createdAt ? new Date(a.createdAt).toLocaleString() : ""}</div>
+        </article>
+      `).join("");
+    }
+    load();
+  </script>
+</body>
+</html>
