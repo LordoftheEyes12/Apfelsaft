@@ -3,7 +3,7 @@
   "main": "worker.js",
   "compatibility_date": "2025-09-20",
   "vars": {
-    "ORIGIN": "http://apfeltest.ben-d69.workers.dev:3000" // include :3000 here
+    "ORIGIN": "http://127.0.0.1:3000" // include :3000 here
   },
   "routes": [{ "pattern": "test.bendaschner.com/*", "zone_name": "bendaschner.com" }]
 }
