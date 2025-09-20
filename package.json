@@ -1,0 +1,32 @@
+{
+  "name": "apfelsaft",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LordoftheEyes12/Apfelsaft.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/LordoftheEyes12/Apfelsaft/issues"
+  },
+  "homepage": "https://github.com/LordoftheEyes12/Apfelsaft#readme",
+  "description": "",
+  "dependencies": {
+    "compression": "^1.8.1",
+    "crypto": "^1.0.1",
+    "dayjs": "^1.11.18",
+    "ejs": "^3.1.10",
+    "express": "^5.1.0",
+    "helmet": "^8.1.0",
+    "morgan": "^1.10.1",
+    "slugify": "^1.6.6",
+    "uuid": "^13.0.0"
+  }
+}

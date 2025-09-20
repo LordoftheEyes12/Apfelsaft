@@ -1,0 +1,28 @@
+<% const pageTitle = 'Latest Articles'; %>
+<%- include('partials/_layout', { title: pageTitle, body: (function(){/*
+  <section class="stack">
+    <h1 class="page-title">Latest Articles</h1>
+
+    <% if (!articles.length) { %>
+      <div class="empty">
+        <p>No articles yet. Post some to <code>/api/articles</code>.</p>
+      </div>
+    <% } %>
+
+    <div class="grid">
+      <% articles.forEach(a => { %>
+        <article class="card">
+          <a class="card-link" href="/article/<%= a.slug %>">
+            <h2 class="card-title"><%= a.headline %></h2>
+            <p class="card-meta">
+              <time datetime="<%= new Date(a.createdAt).toISOString() %>">
+                <%= dayjs(a.createdAt).format('MMM D, YYYY HH:mm') %>
+              </time>
+            </p>
+            <p class="card-more">Read more →</p>
+          </a>
+        </article>
+      <% }) %>
+    </div>
+  </section>
+*/}).toString().match(/\/\*([\s\S]*)\*\//)[1] }) %>
