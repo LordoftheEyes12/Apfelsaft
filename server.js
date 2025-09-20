@@ -1,20 +1,26 @@
-// server.js — read-only FS safe, Vercel-friendly (no top-level await, no listen)
+// server.js — read-only FS safe, Vercel-friendly Express app
+// - No top-level await
+// - No disk writes
+// - Non-blocking init + short timeouts for outbound fetch
+// - Exported app for serverless; app.listen only in local dev
+
 const path = require("path");
 const express = require("express");
 
 const app = express();
 
 // ====== CONFIG ======
-const PORT = process.env.PORT || 3000; // used only for local dev
+const PORT = process.env.PORT || 3000;              // used only for local dev
 const PUBLIC_DIR = path.join(__dirname, "public");
-const N8N_FEED_URL = process.env.N8N_FEED_URL || "";
-const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || "";
-const REFRESH_MS = Number(process.env.REFRESH_MS || 60_000); // cache staleness window
+const N8N_FEED_URL = process.env.N8N_FEED_URL || "";     // optional GET seed
+const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || ""; // optional POST forward
+const REFRESH_MS = Number(process.env.REFRESH_MS || 60_000); // refresh window
 
-// ====== STATE (in-memory, ephemeral) ======
+// ====== STATE (ephemeral) ======
 let cache = { articles: [] };
 let lastRefresh = 0;
 let seeded = false;
+let initDone = false;
 
 // ====== HELPERS ======
 function normalizeArray(input) {
@@ -27,7 +33,16 @@ function normalizeArray(input) {
   }));
 }
 
-async function seedFromEnvJSON() {
+// Fast, safe fetch with timeout
+function fetchJSON(url, { timeoutMs = 2000, ...opts } = {}) {
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), timeoutMs);
+  return fetch(url, { ...opts, signal: ac.signal })
+    .finally(() => clearTimeout(t));
+}
+
+// Seed from env (sync; no awaits here)
+function seedFromEnvJSON() {
   try {
     const raw = process.env.ARTICLES_JSON;
     if (!raw) return;
@@ -39,44 +54,46 @@ async function seedFromEnvJSON() {
   }
 }
 
+// Refresh from external feed (timeout-protected)
 async function refreshFromFeed() {
-  if (!N8N_FEED_URL) return;
+  if (!N8N_FEED_URL) { lastRefresh = Date.now(); return; }
   try {
-    const res = await fetch(N8N_FEED_URL);
-    if (!res.ok) return;
+    const res = await fetchJSON(N8N_FEED_URL, { timeoutMs: 2000 });
+    if (!res.ok) { lastRefresh = Date.now(); return; }
     const data = await res.json();
     const list = Array.isArray(data) ? data : (data.articles || []);
     const normalized = normalizeArray(list);
+
+    // Deduplicate by id, keep local-only items
     const byId = new Map(normalized.map(a => [String(a.id), a]));
-    // keep any local-only items
     cache.articles.forEach(a => {
       const key = String(a.id);
       if (!byId.has(key)) byId.set(key, a);
     });
+
     cache.articles = Array.from(byId.values())
       .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  } catch {
+    // swallow; we'll try again later
   } finally {
     lastRefresh = Date.now();
   }
 }
 
-// Lazy, one-time init without top-level await
-let initPromise = null;
+// Non-blocking, one-time init (no awaits)
 function ensureInit() {
-  if (!initPromise) {
-    initPromise = (async () => {
-      if (!seeded) { await seedFromEnvJSON(); seeded = true; }
-      await refreshFromFeed();
-    })().catch(() => { /* swallow init errors; serve whatever we have */ });
-  }
-  return initPromise;
+  if (initDone) return;
+  if (!seeded) { seedFromEnvJSON(); seeded = true; }
+  // Kick off a background refresh; do NOT await
+  refreshFromFeed().catch(() => {});
+  initDone = true;
 }
 
-// Optionally refresh on demand if stale (no setInterval in serverless)
+// Refresh if cache is stale (call without await in handlers)
 async function refreshIfStale() {
   const now = Date.now();
   if (!lastRefresh || (REFRESH_MS > 0 && (now - lastRefresh) > REFRESH_MS)) {
-    try { await refreshFromFeed(); } catch {}
+    await refreshFromFeed(); // already timeout-protected
   }
 }
 
@@ -85,9 +102,9 @@ app.use(express.json({ limit: "1mb" }));
 app.use(express.static(PUBLIC_DIR));
 
 // ====== API ======
-app.get("/api/health", async (_req, res) => {
-  await ensureInit();
-  await refreshIfStale();
+app.get("/api/health", (_req, res) => {
+  ensureInit();
+  refreshIfStale().catch(() => {});
   res.json({
     ok: true,
     articles: cache.articles.length,
@@ -96,47 +113,47 @@ app.get("/api/health", async (_req, res) => {
   });
 });
 
-app.get("/api/articles", async (_req, res) => {
-  await ensureInit();
-  await refreshIfStale();
+app.get("/api/articles", (_req, res) => {
+  ensureInit();
+  refreshIfStale().catch(() => {});
   res.json({ articles: cache.articles });
 });
 
-app.get("/api/articles/:id", async (req, res) => {
-  await ensureInit();
-  await refreshIfStale();
+app.get("/api/articles/:id", (req, res) => {
+  ensureInit();
+  refreshIfStale().catch(() => {});
   const id = String(req.params.id);
   const item = cache.articles.find(a => String(a.id) === id);
   if (!item) return res.status(404).json({ error: "Not found" });
   res.json(item);
 });
 
-app.post("/api/articles", async (req, res) => {
-  await ensureInit();
+app.post("/api/articles", (req, res) => {
+  ensureInit();
   const payload = req.body;
   if (!payload) return res.status(400).json({ error: "Missing body" });
 
   const normalized = normalizeArray(payload);
   cache.articles = [...normalized, ...cache.articles];
 
-  let forward = { forwarded: false };
+  // Fire-and-forget forwarding to external persistence
   if (N8N_WEBHOOK_URL) {
-    try {
-      const fw = await fetch(N8N_WEBHOOK_URL, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(normalized.length === 1 ? normalized[0] : normalized)
-      });
-      forward = { forwarded: true, status: fw.status };
-    } catch {
-      forward = { forwarded: false, error: "forward_failed" };
-    }
+    fetchJSON(N8N_WEBHOOK_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(normalized.length === 1 ? normalized[0] : normalized),
+      timeoutMs: 1500
+    }).catch(() => {});
   }
 
-  res.status(201).json({ inserted: normalized.length, items: normalized, forward });
+  res.status(201).json({
+    inserted: normalized.length,
+    items: normalized,
+    forward: { forwarded: !!N8N_WEBHOOK_URL }
+  });
 });
 
-// Static pages
+// ====== STATIC PAGES ======
 app.get("/", (_req, res) => res.sendFile(path.join(PUBLIC_DIR, "index.html")));
 app.get("/article/:id", (_req, res) => res.sendFile(path.join(PUBLIC_DIR, "article.html")));
 
@@ -145,10 +162,12 @@ app.use((req, res) => {
   res.status(404).sendFile(path.join(PUBLIC_DIR, "404.html"));
 });
 
-// Local dev: run a server only when invoked directly
+// ====== LOCAL DEV ONLY ======
 if (require.main === module) {
-  app.listen(PORT, () => console.log(`http://localhost:${PORT} (read-only safe)`));
+  app.listen(PORT, () => {
+    console.log(`Local dev: http://localhost:${PORT} (read-only safe)`);
+  });
 }
 
-// Export the app for serverless adapters (Vercel)
+// ====== EXPORT FOR SERVERLESS (Vercel) ======
 module.exports = app;
