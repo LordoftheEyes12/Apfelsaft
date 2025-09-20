@@ -1,7 +1,7 @@
-<%- include('partials/_layout', { title: 'About', body: (function(){/*
+<%- include('partials/_layout', { title: 'About', body: `
   <section class="prose">
     <h1>About</h1>
     <p>This tiny news site accepts articles via an API and renders them with simple, clean styling.</p>
     <p><a href="/">Back to Home</a></p>
   </section>
-*/}).toString().match(/\/\*([\s\S]*)\*\//)[1] }) %>
+` }) %>

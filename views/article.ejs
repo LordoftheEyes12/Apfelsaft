@@ -1,16 +1,16 @@
 <% const pageTitle = article.headline; %>
-<%- include('partials/_layout', { title: pageTitle, body: (function(){/*
+<%- include('partials/_layout', { title: pageTitle, body: `
   <article class="article">
     <a class="breadcrumb" href="/">← Back to Home</a>
-    <h1 class="article-title"><%= article.headline %></h1>
+    <h1 class="article-title">${article.headline}</h1>
     <p class="article-meta">
-      <time datetime="<%= new Date(article.createdAt).toISOString() %>">
-        <%= dayjs(article.createdAt).format('MMMM D, YYYY HH:mm') %>
+      <time datetime="${new Date(article.createdAt).toISOString()}">
+        ${dayjs(article.createdAt).format('MMMM D, YYYY HH:mm')}
       </time>
     </p>
     <hr class="divider" />
     <div class="article-content">
-      <p><%= article.content %></p>
+      <p>${article.content}</p>
     </div>
   </article>
-*/}).toString().match(/\/\*([\s\S]*)\*\//)[1] }) %>
+` }) %>
