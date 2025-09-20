@@ -1,6 +1,6 @@
 {
   // wrangler.jsonc — Cloudflare Workers config (JSON with comments)
-  "name": "news-site-proxy",
+  "name": "apfeltest",
   "main": "worker.js",
   "compatibility_date": "2025-09-20",
 
