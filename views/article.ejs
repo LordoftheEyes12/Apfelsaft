@@ -1,5 +1,5 @@
 <% const pageTitle = article.headline; %>
-<% include('partials/_layout', { title: pageTitle, body: `
+<%- include('partials/_layout', { title: pageTitle, body: `
   <article class="article">
     <a class="breadcrumb" href="/">← Back to Home</a>
     <h1 class="article-title">` + article.headline + `</h1>
@@ -13,4 +13,4 @@
       <p>` + article.content + `</p>
     </div>
   </article>
-` }) %>
+` }) -%>

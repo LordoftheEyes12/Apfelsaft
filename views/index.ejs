@@ -1,5 +1,5 @@
 <% const pageTitle = 'Latest Articles'; %>
-<% include('partials/_layout', { title: pageTitle, body: `
+<%- include('partials/_layout', { title: pageTitle, body: `
   <section class="stack">
     <h1 class="page-title">Latest Articles</h1>
 
@@ -25,5 +25,5 @@
       <% }) %>
     </div>
   </section>
-*/}).toString().match(/\/\*([\s\S]*)\*\//)[1] }) %>
+*/}).toString().match(/\/\*([\s\S]*)\*\//)[1] }) -%>
 `
