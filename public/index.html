@@ -5,33 +5,114 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Apfelsaft — News</title>
   <link rel="stylesheet" href="/styles.css" />
+  <style>
+    .nav { display:flex; align-items:center; gap:.75rem; }
+    .btn { display:inline-block; padding:.4rem .7rem; border:1px solid #00000022; border-radius:.6rem; text-decoration:none; }
+    .btn:hover { background:#0000000a; }
+  </style>
 </head>
 <body>
-  <header class="container">
-    <h1>Apfelsaft</h1>
-    <p class="muted">Simple demo without EJS</p>
+  <header class="container nav">
+    <a href="#/" class="btn" id="homeBtn" aria-label="Home">🏠 Home</a>
+    <h1 style="margin:0;">Apfelsaft</h1>
+    <span class="muted" id="subtitle">Read-only safe</span>
   </header>
 
-  <main class="container" id="list"></main>
+  <main class="container" id="app"></main>
 
   <script>
-    async function load() {
-      const res = await fetch("/api/articles");
-      const data = await res.json();
-      const list = document.getElementById("list");
-      if (!data.articles?.length) {
-        list.innerHTML = `<p class="muted">No articles yet.</p>`;
-        return;
-      }
-      list.innerHTML = data.articles.map(a => `
-        <article class="card">
-          <h2><a href="/article/${a.id}">${a.headline}</a></h2>
-          <p>${(a.content || "").slice(0, 200)}${(a.content||"").length>200?"…":""}</p>
-          <div class="meta">${a.createdAt ? new Date(a.createdAt).toLocaleString() : ""}</div>
-        </article>
-      `).join("");
+    // --- API helpers ---
+    async function apiList() {
+      const r = await fetch("/api/articles", { cache: "no-store" });
+      if (!r.ok) throw new Error("Failed to load list");
+      return r.json(); // { articles: [...] }
     }
-    load();
+    async function apiGet(id) {
+      const r = await fetch(`/api/articles/${encodeURIComponent(id)}`, { cache: "no-store" });
+      if (!r.ok) throw new Error("Not found");
+      return r.json(); // Article
+    }
+
+    // --- Rendering ---
+    const app = document.getElementById("app");
+    const subtitle = document.getElementById("subtitle");
+
+    function nl2br(str="") {
+      return String(str).replace(/&/g,"&amp;")
+                        .replace(/</g,"&lt;")
+                        .replace(/>/g,"&gt;")
+                        .replace(/\n/g,"<br/>");
+    }
+
+    async function renderList() {
+      subtitle.textContent = "Latest";
+      app.innerHTML = `<p class="muted">Loading…</p>`;
+      try {
+        const data = await apiList();
+        const items = data.articles || [];
+        if (!items.length) {
+          app.innerHTML = `<p class="muted">No articles yet.</p>`;
+          return;
+        }
+        app.innerHTML = items.map(a => `
+          <article class="card">
+            <h2><a href="#/article/${encodeURIComponent(a.id)}">${a.headline}</a></h2>
+            <p>${(a.content || "").slice(0, 200)}${(a.content||"").length>200?"…":""}</p>
+            <div class="meta">${a.createdAt ? new Date(a.createdAt).toLocaleString() : ""}</div>
+            <div><a class="btn" href="#/article/${encodeURIComponent(a.id)}">Read</a></div>
+          </article>
+        `).join("");
+      } catch (e) {
+        app.innerHTML = `<p class="muted">Failed to load: ${e.message}</p>`;
+      }
+      document.title = "Apfelsaft — News";
+    }
+
+    async function renderArticle(id) {
+      subtitle.textContent = "Article";
+      app.innerHTML = `<p class="muted">Loading article…</p>`;
+      try {
+        const a = await apiGet(id);
+        app.innerHTML = `
+          <nav style="margin-bottom:1rem;">
+            <a class="btn" href="#/">← Back</a>
+          </nav>
+          <article class="card">
+            <h1 style="margin-top:0;">${a.headline}</h1>
+            <div class="meta">${a.createdAt ? new Date(a.createdAt).toLocaleString() : ""}</div>
+            <div style="margin-top:1rem; line-height:1.6;">${nl2br(a.content)}</div>
+          </article>
+        `;
+        document.title = `Apfelsaft — ${a.headline}`;
+      } catch (e) {
+        app.innerHTML = `
+          <nav style="margin-bottom:1rem;">
+            <a class="btn" href="#/">← Back</a>
+          </nav>
+          <p class="muted">Article not found.</p>
+        `;
+        document.title = "Apfelsaft — Not found";
+      }
+    }
+
+    // --- Tiny router (hash-based) ---
+    function parseHash() {
+      // formats: "#/" or "#/article/:id"
+      const h = location.hash || "#/";
+      const parts = h.slice(2).split("/"); // remove "#/"
+      return parts;
+    }
+
+    async function router() {
+      const parts = parseHash();
+      if (!parts[0]) return renderList();
+      if (parts[0] === "article" && parts[1]) return renderArticle(decodeURIComponent(parts[1]));
+      // fallback
+      return renderList();
+    }
+
+    window.addEventListener("hashchange", router);
+    router(); // initial
   </script>
 </body>
 </html>
