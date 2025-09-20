@@ -1,18 +1,20 @@
-// Vercel catch-all API — tiny router (no Express), read-only safe, non-blocking
-// Handles:
+// api/[...all].js
+// Vercel catch-all API — tiny router, no Express
+// Endpoints:
 //   GET  /api/health
 //   GET  /api/articles
 //   GET  /api/articles/:id
-//   POST /api/articles
+//   POST /api/articles          <-- replaces entire cache with payload
 //
-// Notes:
-// - In-memory cache only (per cold start).
-// - Optional N8N_FEED_URL (GET) to seed/refresh cache (short timeout).
-// - Optional N8N_WEBHOOK_URL (POST) to forward new articles (fire-and-forget).
+// Behavior:
+// - Read-only FS safe (in-memory cache per instance).
+// - If N8N_FEED_URL is set, background refresh seeds/replaces the cache.
+// - If N8N_WEBHOOK_URL is set, POST payload is forwarded (fire-and-forget).
+// - All outbound fetches have short timeouts to avoid hangs.
 
-const N8N_FEED_URL = process.env.N8N_FEED_URL || "";
-const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || "";
-const REFRESH_MS = Number(process.env.REFRESH_MS || 60_000);
+const N8N_FEED_URL   = process.env.N8N_FEED_URL   || "";
+const N8N_WEBHOOK_URL= process.env.N8N_WEBHOOK_URL|| "";
+const REFRESH_MS     = Number(process.env.REFRESH_MS || 60_000);
 
 // ---- state (ephemeral per function instance) ----
 let cache = { articles: [] };
@@ -37,22 +39,27 @@ function normalizeArray(input) {
   }));
 }
 
+// Fast fetch with timeout
 function fetchJSON(url, { timeoutMs = 2000, ...opts } = {}) {
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(), timeoutMs);
   return fetch(url, { ...opts, signal: ac.signal }).finally(() => clearTimeout(t));
 }
 
+// Seed from env (replace cache)
 function seedFromEnvJSON() {
   try {
     const raw = process.env.ARTICLES_JSON;
     if (!raw) return;
     const json = JSON.parse(raw);
     const list = Array.isArray(json) ? json : (json.articles || []);
-    cache.articles = normalizeArray(list);
+    cache.articles = normalizeArray(list).sort(
+      (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
+    );
   } catch { /* ignore malformed */ }
 }
 
+// Refresh from external feed (replace cache)
 async function refreshFromFeed() {
   if (!N8N_FEED_URL) { lastRefresh = Date.now(); return; }
   try {
@@ -61,23 +68,22 @@ async function refreshFromFeed() {
     const data = await res.json();
     const list = Array.isArray(data) ? data : (data.articles || []);
     const normalized = normalizeArray(list);
-
-    const byId = new Map(normalized.map(a => [String(a.id), a]));
-    cache.articles.forEach(a => { if (!byId.has(String(a.id))) byId.set(String(a.id), a); });
-    cache.articles = Array.from(byId.values())
-      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-  } catch { /* keep existing cache */ }
+    cache.articles = normalized.sort(
+      (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
+    ); // <-- REPLACE, don't merge
+  } catch { /* keep existing cache on failure */ }
   finally { lastRefresh = Date.now(); }
 }
 
+// Non-blocking, one-time init
 function ensureInit() {
   if (initDone) return;
   if (!seeded) { seedFromEnvJSON(); seeded = true; }
-  // Kick a background refresh; DO NOT await
-  refreshFromFeed().catch(() => {});
+  refreshFromFeed().catch(() => {}); // fire-and-forget
   initDone = true;
 }
 
+// Refresh if stale (safe to call without await)
 async function refreshIfStale() {
   const now = Date.now();
   if (!lastRefresh || (REFRESH_MS > 0 && (now - lastRefresh) > REFRESH_MS)) {
@@ -85,6 +91,7 @@ async function refreshIfStale() {
   }
 }
 
+// Read JSON body (1MB cap)
 async function readJSON(req, limit = 1 * 1024 * 1024) {
   return new Promise((resolve, reject) => {
     let size = 0;
@@ -109,7 +116,7 @@ async function readJSON(req, limit = 1 * 1024 * 1024) {
 
 // ---- router ----
 module.exports = async (req, res) => {
-  // Ensure Node runtime and fast fail CORS preflight (optional)
+  // CORS + preflight
   if (req.method === "OPTIONS") {
     res.setHeader("access-control-allow-origin", "*");
     res.setHeader("access-control-allow-headers", "content-type");
@@ -118,12 +125,11 @@ module.exports = async (req, res) => {
   }
   res.setHeader("access-control-allow-origin", "*");
 
-  ensureInit();                // non-blocking
-  refreshIfStale().catch(() => {}); // background
+  ensureInit();                 // non-blocking
+  refreshIfStale().catch(() => {}); // background refresh if stale
 
-  // Parse path
   const url = new URL(req.url, "http://localhost");
-  const path = url.pathname;   // e.g. /api/articles or /api/articles/123
+  const path = url.pathname; // e.g. /api/articles or /api/articles/123
 
   // GET /api/health
   if (req.method === "GET" && path === "/api/health") {
@@ -148,7 +154,7 @@ module.exports = async (req, res) => {
     return json(res, 200, item);
   }
 
-  // POST /api/articles
+  // POST /api/articles  (REPLACE entire list)
   if (req.method === "POST" && path === "/api/articles") {
     let body;
     try { body = await readJSON(req); }
@@ -160,20 +166,22 @@ module.exports = async (req, res) => {
     if (!body) return json(res, 400, { error: "Missing body" });
 
     const normalized = normalizeArray(body);
-    cache.articles = [...normalized, ...cache.articles];
+    cache.articles = normalized.sort(
+      (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
+    ); // <-- REPLACE everything
 
-    // Fire-and-forget forward
+    // Fire-and-forget forward (optional)
     if (N8N_WEBHOOK_URL) {
       fetchJSON(N8N_WEBHOOK_URL, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(normalized.length === 1 ? normalized[0] : normalized),
+        body: JSON.stringify(Array.isArray(body) ? body : [body]),
         timeoutMs: 1500
       }).catch(() => {});
     }
 
     return json(res, 201, {
-      inserted: normalized.length,
+      replaced: normalized.length,
       items: normalized,
       forward: { forwarded: !!N8N_WEBHOOK_URL }
     });
@@ -183,5 +191,5 @@ module.exports = async (req, res) => {
   return json(res, 404, { error: "Not found" });
 };
 
-// Ensure Node runtime + short max duration
+// Ensure Node runtime with a short max duration
 module.exports.config = { runtime: "nodejs18.x", maxDuration: 10 };
