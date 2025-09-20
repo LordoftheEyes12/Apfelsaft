@@ -15,23 +15,44 @@ const PORT = process.env.PORT || 3000;
 const DATA_DIR = path.join(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'articles.json');
 
-// --- Ensure data dir/file exists ---
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR);
-if (!fs.existsSync(DATA_FILE)) fs.writeFileSync(DATA_FILE, JSON.stringify([]));
+// In-memory storage for serverless environments
+let articlesCache = null;
 
 // --- Helpers: load/save ---
 function loadArticles() {
-  try {
-    const raw = fs.readFileSync(DATA_FILE, 'utf8');
-    return JSON.parse(raw);
-  } catch (e) {
-    console.error('Failed to read data file:', e);
-    return [];
+  // If we have cached articles, return them
+  if (articlesCache !== null) {
+    return articlesCache;
   }
+  
+  // Try to load from file system (for local development)
+  try {
+    if (fs.existsSync(DATA_FILE)) {
+      const raw = fs.readFileSync(DATA_FILE, 'utf8');
+      articlesCache = JSON.parse(raw);
+      return articlesCache;
+    }
+  } catch (e) {
+    console.log('Could not read from file system, using in-memory storage:', e.message);
+  }
+  
+  // Initialize empty array if no file exists or file system is read-only
+  articlesCache = [];
+  return articlesCache;
 }
 
 function saveArticles(articles) {
-  fs.writeFileSync(DATA_FILE, JSON.stringify(articles, null, 2));
+  // Always update the in-memory cache
+  articlesCache = articles;
+  
+  // Try to save to file system (for local development)
+  try {
+    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR);
+    fs.writeFileSync(DATA_FILE, JSON.stringify(articles, null, 2));
+  } catch (e) {
+    console.log('Could not write to file system (using in-memory storage):', e.message);
+    // This is expected in serverless environments - continue with in-memory storage
+  }
 }
 
 // --- Express setup ---
