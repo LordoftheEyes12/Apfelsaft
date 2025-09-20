@@ -1,7 +1,19 @@
 {
-    "name": "apfelsaft-testworker",
-    "compatibility_date": "2025-09-20",
-    "assets": {
-	      "directory": "./dist"
-    }
+  // wrangler.jsonc — Cloudflare Workers config (JSON with comments)
+  "name": "news-site-proxy",
+  "main": "worker.js",
+  "compatibility_date": "2025-09-20",
+
+  // Environment variables available in the Worker
+  "vars": {
+    // Point this to your Node origin; for local dev keep localhost:3000
+    "ORIGIN": "http://localhost:3000"
+  }
+
+  // If you want to bind a domain/route in classic Workers, uncomment and set:
+  // "routes": [
+  //   { "pattern": "news.example.com/*", "zone_name": "example.com" }
+  // ]
+
+  // For Cloudflare Pages with Functions, omit "routes" and deploy via Pages project settings instead.
 }
